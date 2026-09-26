@@ -1,0 +1,374 @@
+================================================================================
+PROMPT PARA IBM BOB IDE — SPRINT 1: "EL ECOSISTEMA VULNERABLE"
+================================================================================
+
+COMO USAR ESTE DOCUMENTO
+------------------------
+Este archivo contiene 5 prompts, uno por tarea. Copia el bloque de la tarea y
+pegalo en el chat de Bob IDE. NO copies los prompts de varias tareas a la vez:
+se ejecutan en orden y cada uno depende del anterior.
+
+DESPUES de que Bob complete cada tarea, el humano debe:
+  1. Abrir Bob IDE -> panel "Tasks"
+  2. Seleccionar la tarea -> seleccionar el header de la tarea
+  3. Capturar el "task session consumption summary" (screenshot, PNG)
+  4. Guardarlo en bob_sessions/ con el nombre indicado en cada prompt
+  Este paso es obligatorio y no lo puede hacer Bob. Sin el, no hay entrega valida.
+
+ANTES DE EMPEZAR — VERIFICAR EN BOB IDE (Settings -> General):
+  [ ] La cuenta seleccionada es la del hackathon (ibm-hackathon-xxx, us-east),
+      NO la cuenta personal. Si es la personal, estas gastando tus propios Bobcoins.
+  [ ] La version de Bob IDE es v2.0.2 o superior. Las versiones v1.0.3 y v2.0.0
+      dejan de funcionar el 30 de septiembre de 2026 y sus sesiones no cuentan
+      como evidencia. Si no llegas a v2.0.2, actualiza antes de continuar.
+  [ ] Bobcoin usage: tienes 40. Al 100% no hay recharge.
+
+
+================================================================================
+WORKSPACE — CONFIGURAR ANTES DE LA TAREA 1.2
+================================================================================
+
+Abre Bob IDE con el workspace en:
+
+  C:\Users\campo\OneDrive\Desktop\REPUBLIC PROYECTS\Hackathon IBM BOB 2.0
+
+NO abras Bob dentro de backend/, ni en web/, ni en mobile/ por separado.
+Abre la raiz del proyecto, que contiene las tres subcarpetas.
+
+RAZON (importante, no es negociable): en el Sprint 2 un unico Agente Principal
+va a leer el backend y lanzar dos subagentes en paralelo que lean web/ y mobile/
+al mismo tiempo. Eso solo funciona si las tres subcarpetas estan en un mismo
+workspace. Si son workspaces separados, Bob no puede hacer fan-out y el Sprint 2
+se cae.
+
+Estructura que debe existir al abrir:
+
+  backend/       (vacio - lo construyes en Tarea 1.2)
+  web/           (vacio - lo construyes en Tarea 1.3)
+  mobile/        (vacio - lo construyes en Tarea 1.4)
+  docs/          (vacio - escribes aqui en Tarea 1.5)
+  bob_sessions/  (vacio - el humano lo llena con screenshots)
+
+Documentos de referencia ya presentes en la raiz (LEELOS ANTES DE EMPEZAR):
+  REQUERIMIENTOS.txt   -> especificacion completa y normativa de este sprint
+  Problematica.txt     -> el problema de negocio original
+
+
+================================================================================
+TASK 01 — MONOREPO Y .gitignore
+================================================================================
+
+SCREENSHOT: bob_sessions/zeroshot_task01_monorepo_summary.png
+
+PROMPT PARA BOB:
+
+  Lee REQUERIMIENTOS.txt en la raiz de este workspace. Despues ejecuta la Tarea 1.1.
+
+  Crea un archivo .gitignore en la raiz del proyecto que cubra:
+    - node_modules/
+    - .next/
+    - out/
+    - dist/
+    - build/
+    - .gradle/
+    - *.class
+    - .env
+    - .env.local
+    - .DS_Store
+    - logs/
+
+  Revisa que las carpetas backend/, web/, mobile/, docs/ y bob_sessions/ existan.
+  Crea un archivo .gitkeep dentro de docs/ y bob_sessions/ para que git rastree
+  las carpetas vacias.
+
+  Inicializa el repositorio git si no lo esta, con rama main.
+
+  IMPORTANTE: NO hagas git push. Solo deja los cambios en staging area y
+  preparalos para commit. El humano confirma el push manualmente.
+
+  Al terminar, listame el estado final del arbol de archivos.
+
+  NO uses IA para escribir codigo en esta tarea, es solo estructura. Pero
+  ejecutala dentro de Bob igual, porque la evidencia de uso de Bob es un
+  entregable obligatorio del hackathon.
+
+
+================================================================================
+TASK 02 — BACKEND NODE.JS / EXPRESS
+================================================================================
+
+SCREENSHOT: bob_sessions/zeroshot_task02_backend_summary.png
+
+PROMPT PARA BOB:
+
+  Lee REQUERIMIENTOS.txt, seccion 3, Tarea 1.2. Ejecuta esa tarea completa.
+
+  Construye el backend en la carpeta backend/. Node.js 24 y Express.
+
+  Endpoint: GET /api/producto en el puerto 3001
+  Endpoint: GET /api/health que devuelve {"status":"ok"}
+
+  La respuesta de /api/producto debe ser EXACTAMENTE esta:
+
+    {
+      "id": 1,
+      "nombre": "Laptop",
+      "precioTotal": 1500
+    }
+
+  REQUISITO ESTRUCTURAL CRITICO — este es el punto mas importante de la tarea:
+
+  El esquema del producto debe vivir en un archivo separado, por ejemplo
+  backend/src/producto.schema.js, que exporte la forma del objeto. El controlador
+  DEBE importar ese modulo. No hardcodees el objeto literal dentro del route
+  handler.
+
+  Razon: en el Sprint 2, un agente de Bob va a leer este archivo especifico para
+  extraer el esquema del JSON y detectar cambios de contrato. Si el esquema esta
+  enterrado en el controlador, esa extraccion se vuelve fragil. Este archivo es
+  el contrato de verdad del proyecto.
+
+  Ademas:
+    - Habilita CORS (el frontend corre en otro puerto y lo necesitara)
+    - Usa CommonJS (require/module.exports), no ESM. Es mas simple y es lo que
+      espera el sprint.
+    - El servidor debe arrancar con: node src/server.js
+
+  Verifica tu trabajo: levanta el servidor, haz curl a /api/producto, confirma
+  que devuelve el JSON exacto, luego bajalo. Dejalo corriendo solo si no molesta.
+
+  Al terminar, mostrame el arbol de archivos de backend/ y la respuesta real
+  del endpoint.
+
+
+================================================================================
+TASK 03 — WEB NEXT.JS
+================================================================================
+
+SCREENSHOT: bob_sessions/zeroshot_task03_web_summary.png
+
+PROMPT PARA BOB:
+
+  Lee REQUERIMIENTOS.txt, seccion 3, Tarea 1.3. Ejecuta esa tarea completa.
+
+  Construye la app web en la carpeta web/. Next.js con App Router, corriendo en
+  el puerto 3000. Renderiza id, nombre y precioTotal del producto, leyendo de
+  GET http://localhost:3001/api/producto.
+
+  RESTRICCION 1 — fetch en tiempo de build (el fallo clasico de Next.js):
+  Un fetch a una URL absoluta desde un Server Component se ejecuta en tiempo de
+  build y falla, aunque la app funcione en dev. Resuelvelo con UNA de estas tres
+  estrategias, elige la mejor y documenta cual elegiste con un comentario:
+
+    (a) rewrites en next.config.js proxando /api/producto al backend
+        (preferida — la app nunca sabe que hay otro servidor)
+    (b) export const dynamic = 'force-dynamic' en la pagina
+    (c) fetch en un Client Component con 'use client' y useEffect
+
+  CRITICO: despues de construir, ejecuta `npm run build` y confirma que
+  COMPLETA sin errores. Un build que no compila es un entregable invalido.
+
+  RESTRICCION 2 — acceso directo al campo (el corazon del proyecto):
+  La vista debe acceder a precioTotal de forma DIRECTA:
+
+    producto.precioTotal
+
+  Esta PROHIBIDO usar:
+    - destructuring con default:      const { precioTotal = 0 } = producto
+    - optional chaining:              producto?.precioTotal
+    - nullish coalescing:             producto?.precioTotal ?? 0
+    - cualquier fallback que oculte el fallo
+
+  Razon, y lee esto con atencion porque es la decision de diseño mas importante
+  del sprint: un acceso directo produce un error de runtime VISIBLE y ruidoso,
+  que es facil de detectar y de documentar en la demo. Un acceso con default o
+  con optional chaining produce un fallo SILENCIOSO: la pagina renderiza 0, o
+  renderiza vacio, y no hay ningun error en consola. El fallo silencioso es el
+  peor caso porque llega a produccion y nadie lo ve hasta que un cliente
+  reporta el problema. Para poder documentar los fallos en la Tarea 1.5
+  necesitamos que sean ruidosos y reproducibles.
+
+  Al terminar, mostrame el componente que hace el render, la estrategia de fetch
+  que elegiste, y el resultado del build.
+
+
+================================================================================
+TASK 04 — MOBILE KOTLIN (JVM, SIN ANDROID)
+================================================================================
+
+SCREENSHOT: bob_sessions/zeroshot_task04_mobile_summary.png
+
+PROMPT PARA BOB:
+
+  Lee REQUERIMIENTOS.txt, secciones 1.3 y 3 (Tarea 1.4). Ejecuta esa tarea.
+
+  Construye el proyecto en mobile/. IMPORTANTE: esto es Kotlin/JVM puro.
+  NO instales Android SDK, NO uses el plugin de Android, NO intentes crear un
+  emulador. Esta maquina no los tiene y no los necesitas.
+
+  Usar el Gradle Wrapper (gradlew). Si no existe, generarlo con `gradle wrapper`
+  o con el wrapper estandar de Kotlin.
+
+  build.gradle.kts debe tener:
+    - plugin kotlin("jvm") version 2.x
+    - com.google.code.gson:gson:2.11.0
+    - kotlin("test") para pruebas
+    - toolchain con languageVersion = 21
+
+  NO debe existir ningun plugin de Android en el build.gradle.kts.
+
+  REGLA CRITICA DE JAVA — lee esto:
+  Esta maquina tiene DOS JDKs instalados. Debes usar el JDK 21 Temurin en:
+    C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot
+  NO uses el jdk-26.0.2 de "C:\Program Files\Java\" — Kotlin 2.x y Gradle no lo
+  soportan.
+  Configura org.gradle.java.home en gradle.properties apuntando al JDK 21, o
+  defines el toolchain a 21 explicitamente.
+
+  Si la build falla con "Unsupported Java. Your build is currently configured to
+  use Java 26" o "Unsupported class file major version", el problema es el JDK, no
+  Kotlin. No actualices Kotlin — cambia el JDK.
+
+  ARCHITECTURA ESPERADA:
+    mobile/src/main/kotlin/.../model/Producto.kt
+    mobile/src/test/kotlin/.../ProductoDeserializationTest.kt
+
+  La data class:
+
+    data class Producto(
+        val id: Int,
+        val nombre: String,
+        @SerializedName("precioTotal") val precioTotal: Double
+    )
+
+  El @SerializedName es el punto del ejercicio: ata el nombre del campo JSON al
+  nombre de la propiedad Kotlin.
+
+  EL TEST DEBE SER EJECUTABLE Y TENER EXIT CODE:
+  Escribe un test que ejecute Gson.fromJson() contra el JSON del contrato v1 y
+  confirme que el parseo funciona. Debe correr con `gradlew test` y devolver exit
+  code 0 con el contrato correcto.
+
+  Este test es la evidencia que usaremos en el Sprint 2 para demostrar el fallo,
+  asi que debe ser real y ejecutable, no un placeholder. En la Tarea 1.5 lo vamos
+  a romper a proposito para documentar como falla.
+
+  Al terminar, ejecutame `gradlew test` y mostrame el resultado real, incluyendo
+  el output de compilacion y el resultado de los tests.
+
+
+================================================================================
+TASK 05 — LA PRUEBA DE RUPTURA (el entregable central)
+================================================================================
+
+SCREENSHOT: bob_sessions/zeroshot_task05_prueba_ruptura_summary.png
+
+PROMPT PARA BOB:
+
+  Lee REQUERIMIENTOS.txt, seccion 3, Tarea 1.5. Esta es la tarea mas importante
+  del sprint. Ejecutala completa.
+
+  Objetivo: romper el contrato de la API de tres maneras DIFERENTES y documentar
+  como falla cada una. Escribe todo en docs/RUPTURA.md.
+
+  IMPORTANTE: los cambios se aplican SOLO en backend/. Nunca modifiques web/ ni
+  mobile/ — esos son los consumidores, y si los tocas estaras "arreglando" el
+  problema en lugar de demostrarlo. Al final de cada escenario, REVIERTE el
+  cambio del backend y confirma que todo vuelve a verde.
+
+  --- ESCENARIO A: cambio de nombre ---
+  En backend, cambia precioTotal por precio_total.
+  1. Levanta el backend, haz curl a /api/producto, captura la respuesta REAL
+  2. Corre la app web y captura el fallo exacto (error de render / undefined)
+  3. Corre `gradlew test` en mobile/ y captura la excepcion real
+  4. Captura el mensaje de error LITERAL, no una descripcion
+  5. Revierte el cambio, confirma que web y mobile vuelven a verde
+
+  --- ESCENARIO B: cambio de tipo ---
+  En backend, cambia el tipo de precioTotal sin cambiar su nombre.
+  Opciones: de numero a string ("1500"), o de string a numero.
+  Si hace falta, ajusta tambien el tipo en la data class de mobile/ para que
+  quede claro el conflicto (pero NO cambies el backend a Mobile todavia — el
+  proposito es ver el crash por tipo).
+
+  Captura:
+  1. La respuesta real del endpoint
+  2. Que hace la web al renderizar un tipo distinto al esperado
+  3. La excepcion real de Gson en mobile/ (crash por incompatibilidad de tipo)
+  4. El mensaje LITERAL
+
+  Por que este escenario importa mas que el A: EL NOMBRE DEL CAMPO NO CAMBIO.
+  Un grep de "precioTotal" no encuentra absolutely nada. Ninguna herramienta
+  basada en busqueda de texto lo detecta. Este es el escenario que demuestra
+  que se necesita analisis de esquema y no solo de strings. Es lo que diferencia
+  este proyecto de un simple grep.
+
+  --- ESCENARIO C: fallo silencioso (el peor caso) ---
+  En backend, elimina un campo del producto, o anade un campo que el consumidor
+  no espera. Alternativamente, cambia un valor por un valor "vacio" que el
+  consumidor no va a distinguir (por ejemplo un id en 0).
+
+  Captura:
+  1. La respuesta real del endpoint
+  2. QUE HACE LA WEB: si hay default u optional chaining, muestra 0 o vacio SIN
+     NINGUN ERROR. Captura la pantalla y la consola. Documenta explicitamente
+     que no hay excepcion.
+  3. Que hace Kotlin: el campo faltante queda en su valor default (0 o null)
+     sin excepcion
+  4. Documenta por que esto es PEOR que los escenarios A y B
+
+  Por que este escenario es el mas importante: NO HAY EXCEPCION. NO HAY ERROR EN
+  CONSOLA. La app "funciona". El usuario ve un precio de 0 o un dato vacio en
+  produccion y nadie se entera hasta que un cliente lo reporta. Un crash-visible
+  NO atrapa este caso. Es donde esta el valor real del proyecto.
+
+  --- FORMATO DE docs/RUPTURA.md ---
+
+  Para cada uno de los tres escenarios, incluye:
+
+    ## Escenario [A/B/C]: [nombre]
+    **Cambio aplicado:** [el diff exacto, solo en backend]
+    **Respuesta real del endpoint:** [el JSON literal, copiado de curl]
+    **Comportamiento de web/:** [output literal de consola, o captura]
+    **Comportamiento de mobile/:** [stack trace o excepcion literal]
+    **Excepcion:** [SI O NO — y por que ese matiz importa]
+    **Como reproducirlo:** [los comandos exactos, paso a paso]
+    **Lo que un grep NO detectaria:** [reflexion]
+
+  Al final del documento, agrega una seccion de cierre:
+
+    ## Por que el escenario C es el peor
+    [explicacion de que el fallo silencioso no lo atrapa ninguna herramienta
+    que dependa de detectar un crash, y por que es el que mas dinero cuesta]
+
+  Al terminar, verifica que backend, web y mobile estan de vuelta en estado
+  verde, y mostrame el contenido completo de docs/RUPTURA.md.
+
+
+================================================================================
+NOTAS FINALES PARA EL EQUIPO
+================================================================================
+
+SOBRE POR QUE SE USA BOB EN TODAS LAS TAREAS, INCLUYENDO LAS DE "SOLO ESTRUCTURA":
+La guia del hackathon establece que la solucion debe exhibir IBM Bob IDE como
+componente central para ser elegible a evaluacion, y exige screenshots de
+"task session consumption summary" en la carpeta bob_sessions/ como evidencia.
+Si las tareas se hacen a mano, no hay material para esa carpeta y hay que
+reconstruir a la carrera. Por eso las 5 tareas se ejecutan dentro de Bob, aunque
+el resultado sea codigo convencional.
+
+SOBRE CONSUMIR LOS BOBCOINS:
+40 Bobcoins por participante, sin recharge al 100%. Si son varios en el equipo,
+dividan las tareas para consumir el total combinado. Monitoreen en Bob IDE:
+Settings -> General -> Bobcoin usage.
+
+SOBRE LO QUE VIENE EN SPRINT 2:
+La arquitectura de agentes (Agente Principal + Subagente Web + Subagente Movil
+en paralelo, con Document Understanding para extraer el esquema) todavia no se
+construye. Este sprint solo arma el terreno y produce la evidencia de que el
+problema es real, con tres escenarios de fallo documentados. Ese es el insumo
+que el Agente Principal consumira en el sprint siguiente.
+
+================================================================================
+FIN DEL DOCUMENTO
+================================================================================

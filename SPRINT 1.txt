@@ -1,0 +1,14 @@
+Sprint 1: El Ecosistema Vulnerable (Fundamentos y "Mock Stack")
+
+Objetivo: Construir el monorepo base con las tres aplicaciones conectadas. En este sprint no usaremos IA todavía; el objetivo es tener un entorno real que podamos "romper" a propósito.
+
+    Tarea 1.1: Configuración del Monorepo. Crear un repositorio en GitHub (o una carpeta local) con tres subcarpetas: /backend, /web, y /mobile.
+REPO: https://github.com/YarKoA/IBM-Bob-2.0-Hackathon-ZeroShot (TENGO PERMISOS PARA MANIPULAR.)
+
+    Tarea 1.2: Desarrollo del Backend (Node.js/Express). Crear un servidor básico con un solo endpoint (ej. GET /api/producto) que devuelva un JSON estático (ej. { id: 1, nombre: "Laptop", precioTotal: 1500 }).
+
+    Tarea 1.3: Desarrollo Web (Next.js). Crear una página simple que consuma ese endpoint y renderice la información en pantalla (asegurándose de usar la propiedad precioTotal).
+
+    Tarea 1.4: Desarrollo Móvil (Kotlin). Crear la Data Class de Kotlin que mapee la respuesta usando @SerializedName("precioTotal").
+
+    Tarea 1.5: La Prueba de Ruptura (Prueba Manual). Cambiar manualmente el nombre de la variable en el backend a precio_total y documentar cómo fallan Next.js (muestra undefined) y Kotlin (falla la des-serialización).

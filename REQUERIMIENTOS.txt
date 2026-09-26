@@ -1,0 +1,406 @@
+================================================================================
+REQUERIMIENTOS TECNICOS — SPRINT 1
+"EL ECOSISTEMA VULNERABLE"
+Hackathon IBM Bob 2.0 — Validacion Contextual Cero-Configuracion
+================================================================================
+
+Documento normativo. Define QUE se construye, CON QUE stack, y COMO se acepta.
+Si algo no esta aqui, no se construye en Sprint 1.
+
+
+--------------------------------------------------------------------------------
+0. CONTEXTO
+--------------------------------------------------------------------------------
+
+Las aplicaciones moderna estan altamente interconectadas pero los equipos trabajan
+en silos. El problema critico son los CONTRATOS DE API: un cambio aparentemente
+inofensivo en el backend (renombrar precioTotal -> precio_total, o cambiar su tipo
+de String a Integer) rompe a los consumidores en produccion. Los tests unitarios
+del backend siguen pasando porque testean al backend contra si mismo.
+
+Este sprint NO usa IA para resolver el problema. El objetivo es construir un
+entorno real que podamos ROMPER A PROPOSITO, de forma controlada y documentada,
+para tener una linea base verificable en el Sprint 2.
+
+
+--------------------------------------------------------------------------------
+1. ENTORNO DE TRABAJO (ya configurado — NO modificar)
+--------------------------------------------------------------------------------
+
+RAIZ DEL PROYECTO:
+  C:\Users\campo\OneDrive\Desktop\REPUBLIC PROYECTS\Hackathon IBM BOB 2.0
+
+ESTRUCTURA DE CARPETAS:
+  backend/     -> API Node.js + Express      (el detonante)
+  web/         -> Next.js                     (consumidor afectado #1)
+  mobile/      -> Kotlin JVM + Gradle         (consumidor afectado #2)
+  docs/        -> documentacion tecnica
+  bob_sessions/-> evidencia de uso de Bob IDE (ENTREGABLE OBLIGATORIO)
+
+TOOLCHAIN YA INSTALADO:
+  Node.js      v24.19.0   (instalado)
+  npm          11.17.0    (instalado)
+  JDK          Temurin 21.0.12.1 LTS  en C:\Program Files\Eclipse Adoptium\
+                         (recien instalado para este sprint)
+  Gradle       NO instalado -> usar el Gradle Wrapper (gradlew) que genere Bob
+  Android SDK  NO INSTALADO — ver seccion 1.3
+  Docker       NO INSTALADO — no requerido en Sprint 1
+
+REPOSITORIO GIT:
+  https://github.com/YarKoA/IBM-Bob-2.0-Hackathon-ZeroShot
+  Rama: main   |   Permisos: push habilitado
+
+1.1 — REGLA DE ORO: JAVA
+  Usar EXCLUSIVAMENTE el JDK 21 Temurin en:
+    C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot
+  NO usar el jdk-26.0.2 de "C:\Program Files\Java\".
+  Razon: Kotlin 2.x y Gradle 8.x no soportan JDK 26 (JEP removido / toolchain
+  mismatch). Si una build falla con "Unsupported class file major version" o
+  "Unsupported Java. Your build is currently configured to use Java 26", el
+  fix es setear org.gradle.java.home o el toolchain a 21, NO actualizar Kotlin.
+
+1.2 — ENTORNO DE EJECUCION DE BOB IDE
+  Bob IDE debe abrirse con el workspace en la RAIZ del proyecto (la carpeta
+  "Hackathon IBM BOB 2.0"), NO dentro de backend/ ni mobile/ por separado.
+  Razon: el Sprint 2 requiere que un unico agente (Agente Principal) lea el
+  backend y lance subagentes que lean web/ y mobile/ simultaneamente. Si cada
+  subcarpeta es un workspace separado, Bob no puede hacer fan-out.
+  Si Bob ofrece multi-workspace, registrar C:\...\Hackathon IBM BOB 2.0 como
+  un unico workspace conteniendo las tres subcarpetas.
+
+1.3 — RESTRICCION CRITICA: KOTLIN SIN ANDROID SDK
+  Esta maquina NO tiene Android SDK ni Android Studio. Sprint 1 NO lo requiere.
+
+  mobile/ debe ser un proyecto Kotlin/JVM puro (plugins: kotlin("jvm") +
+  kotlin("plugin.serialization") o la libreria Gson). SIN plugin
+  "com.android.application", SIN android.jar, SIN emulador.
+
+  POR QUE ESTA DECISION:
+  El objetivo de la Tarea 1.5 es DOCUMENTAR como falla la deserializacion. Eso
+  se demuestra con un test JVM que ejecuta Gson.fromJson() sobre la respuesta
+  real del backend y falla con excepcion. El modo de fallo (crash de
+  deserializacion) es IDENTICO al de Android; lo unico que cambia es que corre
+  en una JVM en vez de un dispositivo. A cambio: corre en CI, da exit code en
+  vez de screenshot, y no requiere emulador.
+
+  La app Android nativa con Jetpack Compose es trabajo de Sprint 2 en adelante.
+  No intenten instalarla ahora — es un pozo de tiempo.
+
+
+--------------------------------------------------------------------------------
+2. ALCANCE — 5 TAREAS
+--------------------------------------------------------------------------------
+
+  Tarea 1.1  Monorepo                    (ya partiallydone por organizacion)
+  Tarea 1.2  Backend Node/Express
+  Tarea 1.3  Web Next.js
+  Tarea 1.4  Mobile Kotlin data class
+  Tarea 1.5  La prueba de ruptura
+
+Detalle de cada tarea en la seccion 3.
+
+
+--------------------------------------------------------------------------------
+3. DETALLE DE TAREAS
+--------------------------------------------------------------------------------
+
+--- TAREA 1.1 — MONOREPO ---------------------------------------------------
+
+  Ya ejecutado por organizacion. Bob debe:
+    - Crear .gitignore en la raiz cubriendo: node_modules/, .next/, build/,
+      .gradle/, *.class, .env, .env.local
+    - Inicializar git si hace falta y hacer commit inicial de la estructura
+    - NO hacer push sin confirmacion explicita del humano
+
+
+--- TAREA 1.2 — BACKEND (el detonante) -------------------------------------
+
+  Stack:  Node.js + Express
+  Puerto: 3001
+  Ruta:   GET /api/producto
+
+  Respuesta EXACTA esperada (contrato v1):
+
+    {
+      "id": 1,
+      "nombre": "Laptop",
+      "precioTotal": 1500
+    }
+
+  REQUISITO ESTRUCTURAL CRITICO (no negociable):
+  El esquema debe vivir en un ARCHIVO SEPARADO y TYPEADO, no hardcodeado en el
+  controlador. Por ejemplo backend/src/producto.schema.js exportando la forma
+  del objeto, y el controlador lo importa.
+
+  RAZON: En el Sprint 2, el Agente Principal de Bob leera este archivo para
+  "extraer el esquema del JSON esperado". Si el esquema esta enterrado en el
+  controlador, la extraccion por Document Understanding se vuelve fragil e
+  inestable. Este archivo es el contrato de verdad del Sprint 2.
+
+  Requisitos adicionales:
+    - Endpoint de salud: GET /api/health -> {"status":"ok"}
+    - CORS habilitado (el web corre en otro puerto; lo necesitara en 1.3)
+    - Un unico producto estatico es suficiente. NO anadir base de datos,
+      NO anadir auth, NO anadir mas endpoints.
+
+  Criterios de aceptacion:
+    [ ] `node src/server.js` levanta sin error en el puerto 3001
+    [ ] curl http://localhost:3001/api/producto devuelve el JSON exacto de arriba
+    [ ] El esquema es un modulo separado e importado, no un literal en el route handler
+
+
+--- TAREA 1.3 — WEB (consumidor afectado #1) --------------------------------
+
+  Stack:  Next.js (App Router), React, JavaScript o TypeScript
+  Puerto: 3000
+
+  Requisito funcional:
+    Renderizar en pantalla id, nombre y precioTotal del producto, DDOS reader
+    desde GET http://localhost:3001/api/producto
+
+  REQUISITO CRITICO — evitemos el fallo clasico de Next.js:
+    Un fetch a una URL absoluta (http://localhost:3001) desde un Server
+    Component se ejecuta EN TIEMPO DE BUILD en environments de Vercel/Next y
+    falla con "Dynamic server usage" o timeout, aunque la app funcione bien en
+    dev. Tres soluciones validas, en orden de preferencia:
+
+      (a) rewrites en next.config.js — proxea /api/producto al backend. La app
+          consume rutas relativas y nunca sabe que hay otro servidor. Esta es
+          la opcion preferida.
+      (b) Marcar la pagina como dinamica:  export const dynamic = 'force-dynamic'
+      (c) fetch en un Client Component ('use client') con useEffect, que
+          corre en el navegador y no en build time.
+
+    Elija una, documente la eleccion en un comentario, y verifique que
+    `npm run build` COMPLETA sin error. Un build que no compila es un entregable
+    invalido — los jueces lo van a correr.
+
+  Requisito critico de DEMO — este es el punto que la mayoria de los equipos
+  va a perder, y es donde esta el valor real del proyecto:
+
+    La vista NO debe usar destructuring con valor default. Especificamente
+    PROHIBIDO:
+
+      const { precioTotal = 0 } = producto        <-- NO
+      producto?.precio?.precioTotal ?? 0         <-- NO
+
+    Y NO debe usar encadenamiento opcional que oculte el fallo:
+
+      producto?.precioTotal                      <-- NO
+
+    Se requiere acceso DIRECTO y visible:
+
+      producto.precioTotal
+
+    RAZON (esto es el corazon del proyecto): un acceso directo produce un
+    error de runtime VISIBLE y ruidoso (TypeError / undefined renderizado) que
+    es facil de detectar y de documentar. Un acceso con default o con optional
+    chaining produce un fallo SILENCIOSO: la app renderiza 0, o renderiza
+    nada, y no hay error en consola. El fallo silencioso es el peor caso
+    porque llega a produccion y nadie lo ve. Para la demo necesitamos que el
+    fallo sea ruidoso y reproducible.
+
+  Criterios de aceptacion:
+    [ ] `npm run build` completa sin errores
+    [ ] `npm run dev` muestra el producto con id, nombre, precioTotal
+    [ ] La lectura de precioTotal es acceso directo, sin default ni optional chaining
+    [ ] El fetch usa una de las tres estrategias de la seccion de arriba y esta documentada
+
+
+--- TAREA 1.4 — MOBILE (consumidor afectado #2) ------------------------------
+
+  Stack:  Kotlin/JVM + Gradle (wrapper) + Gson
+  Tipo:   Proyecto Kotlin/JVM puro. SIN Android SDK, SIN plugin Android.
+
+  Dependencias minimas (build.gradle.kts):
+    - kotlin("jvm") plugin, version 2.x
+    - com.google.code.gson:gson:2.11.0
+    - kotlin("test") o JUnit para las pruebas
+    - toolchain: languageVersion = 21
+
+  Estructura esperada:
+    mobile/src/main/kotlin/.../model/Producto.kt     -> data class con @SerializedName
+    mobile/src/test/kotlin/.../ProductoDeserializationTest.kt  -> el test que documenta el fallo
+
+  Data class requerida:
+
+    data class Producto(
+        val id: Int,
+        val nombre: String,
+        @SerializedName("precioTotal") val precioTotal: Double
+    )
+
+  El @SerializedName es el punto del ejercicio: ata el nombre del campo JSON al
+  nombre de la propiedad Kotlin. Si el backend renombra el campo y el
+  @SerializedName no se actualiza, Gson deja el campo en su valor default
+  silenciosamente en algunos casos, o falla en otros. El test documenta cual.
+
+  Requisito critico — el test debe ser EJECUTABLE y tener EXIT CODE:
+    El test debe ejecutar el parseo real y capturar la excepcion. Debe poder
+    correrse con `gradlew test` y devolver exit code != 0 cuando el contrato
+    este roto. Esto es lo que lo hace argumento de venta en vez de screenshot.
+
+  Criterios de aceptacion:
+    [ ] `gradlew test` compila y ejecuta en JDK 21 sin error de toolchain
+    [ ] NO existe ningun plugin de Android en build.gradle.kts
+    [ ] El @SerializedName("precioTotal") esta presente y es explicito
+    [ ] El test ejecuta Gson.fromJson() contra un JSON de contrato y pasa con el JSON v1
+
+
+--- TAREA 1.5 — LA PRUEBA DE RUPTURA (el entregable central) -----------------
+
+  ESTA ES LA TAREA QUE DEFINE EL PROYECTO. No la hagan como un solo rename.
+
+  Entregable: docs/RUPTURA.md con los TRES escenarios siguientes, cada uno con
+  el error REAL (stack trace o mensaje exacto), no una descripcion, y el comando
+  exacto para reproducirlo.
+
+  Escenario A — CAMBIO DE NOMBRE
+    Cambio:    backend   precioTotal  ->  precio_total
+    Web:       acceso directo produce undefined / error de render
+    Kotlin:    JsonSyntaxException o campo nulo en la deserializacion
+    Comando:   curl el endpoint, comparar con la linea de render, correr el test
+
+    Por que importa: este es el caso "facil". Es el UNICO caso que un grep de
+    texto plano encuentra. Lo incluimos como control, para demostrar que el
+    sistema funciona — no como el logro.
+
+  Escenario B — CAMBIO DE TIPO (el que el enunciado original no menciona)
+    Cambio:    backend   precioTotal: String "1500"  ->  precioTotal: Number 1500
+                Y/O en la data class:  precioTotal: Double  ->  precioTotal: String
+
+    Web:       renderiza distinto (1500 vs 1500.0) o rompe la operacion
+    Kotlin:    CRASH por incompatibilidad de tipo. Gson no puede convertir
+               un objeto JSON a Double si recibe un String, o viceversa.
+
+    Por que importa: EL NOMBRE DEL CAMPO NO CAMBIO. Un grep de "precioTotal"
+    no encuentra nada. Ninguna herramienta basada en busqueda de texto lo
+    detecta. Este escenario es la justificacion tecnica de por que se necesita
+    analisis de esquema y no solo de strings. Es el que diferencia este
+    proyecto de un simple grep.
+
+  Escenario C — FALLO SILENCIOSO (el peor caso, el mas caro)
+    Cambio:    backend elimina un campo y/o anade un campo requerido que el
+                consumidor no espera
+
+    Web:       si hay default u optional chaining -> muestra 0 / vacio, SIN error
+    Kotlin:    campo faltante queda en su valor default (0 / null) SIN excepcion
+
+    Por que importa: NO HAY EXCEPCION. NO HAY ERROR EN CONSOLA. La app
+    "funciona". El usuario ve un precio de 0 o un dato vacio en produccion y
+    nadie se entera hasta que un cliente lo reporta. Este es el escenario que
+    un crash-visible NO atrapa, y es donde esta el dinero del proyecto.
+
+  Procedimiento para cada escenario:
+    1. Aplicar el cambio SOLO en backend/ (los consumidores no se tocan)
+    2. Ejecutar el backend
+    3. Ejecutar curl y capturar la respuesta real -> guardar en RUPTURA.md
+    4. Correr el render de web/ (o el test) y capturar el fallo exacto
+    5. Correr `gradlew test` en mobile/ y capturar el fallo exacto
+    6. Revertir el cambio en backend/ y confirmar que todo vuelve a verde
+    7. Registrar en RUPTURA.md el antes/despues literal
+
+  Advertencia importante para el equipo:
+    Los escenarios B y C son masiosos de demo que el A, porque muestran que el
+    problema NO es solo "renombraron una variable". Si el demo solo cubre el
+    escenario A, los jueces pueden replicarlo con grep en cinco minutos y el
+    proyecto se ve trivial. Los escenarios B y C son los que demuestran que se
+    requiere analisis de contrato y verificacion cruzada.
+
+  Criterios de aceptacion:
+    [ ] docs/RUPTURA.md existe con los 3 escenarios
+    [ ] Cada escenario tiene el error real capturado, no una descripcion
+    [ ] Cada escenario tiene el comando de reproduccion
+    [ ] Se documento por que el escenario C no lo atrapa un crash-visible
+    [ ] Tras revertir, backend + web + mobile vuelven a su estado verde
+
+
+--------------------------------------------------------------------------------
+4. ENTREGABLES OBLIGATORIOS DEL HACKATHON (reglas de la guia IBM)
+--------------------------------------------------------------------------------
+
+ Estos requisitos vienen de la guia oficial del hackathon, NO son opcionales.
+ Ignorarlos puede descalificar el proyecto sin importar que tan bueno sea el codigo.
+
+ 4.1 — BOB IDE COMO COMPONENTE CENTRAL
+   La guia establece: la solucion debe exhibir IBM Bob IDE como componente
+   central para ser elegible a/AWSFeature evaluation. Por eso TODAS las tareas de
+   este sprint — incluyendo las que el sprint original marca como "sin IA" — se
+   ejecutan dentro de Bob IDE. No se construye nada a mano.
+
+ 4.2 — CARPETA bob_sessions/ CON SCREENSHOTS
+   Requisito formal de la entrega:
+     - Carpeta llamada exactamente "bob_sessions" en la raiz del repositorio
+       (ya creada)
+     - Un screenshot del "task session consumption summary" por cada tarea
+       relevante del proyecto
+     - Formato PNG
+     - Nombre: teamname_taskNN_descripcioncorta_summary.png
+       Ejemplo: zeroshot_task01_backend_summary.png
+     - En Bob IDE: panel Tasks -> seleccionar tarea -> seleccionar el header
+       de la tarea -> aparece el consumption summary -> capturar
+     - Si el proyecto usa tareas de varios workspaces, seleccionar "All"
+     - REQUERIDO PARA CADA PARTICIPANTE del equipo, no solo uno
+
+   ACCION REQUERIDA POR EL ORGANIZADOR DESPUES DE CADA TAREA DE BOB:
+     Bob completa una tarea -> el humano abre Bob IDE -> Tasks -> task header
+     -> captura el consumption summary -> guarda en bob_sessions/ con el nombre
+     correcto. Este paso NO lo puede hacer Bob por si mismo.
+
+ 4.3 — PRESUPUESTO: 40 BOBCOINS
+   Cada participante recibe 40 Bobcoins. Al llegar a 100% de uso NO hay recharge.
+   Estrategia recomendada:
+     - Dividir las tareas entre los miembros del equipo para consumir el total
+       combinado
+     - Monitorear en Bob IDE: Settings -> General -> Bobcoin usage
+     - Verificar que la cuenta seleccionada es la del hackathon
+       (ibm-hackathon-xxx, region us-east) y NO la cuenta personal
+     - Usar /init para dar contexto persistente y no re-explicar en cada task
+
+ 4.4 — VERSION DE BOB IDE — CRITICO
+   Las versiones v1.0.3 y v2.0.0 de Bob IDE DEJAN DE FUNCIONAR el 30 de
+   septiembre de 2026. Si Bob esta en esas versiones, las sesiones no cuentan
+   como evidencia valida. Verificar y actualizar a v2.0.2 o superior ANTES de
+   empezar. Esta es la accion mas urgente del sprint.
+
+ 4.5 — DATOS
+   Traer datasets propios. No usar data de clientes, no usar informacion
+   personal, no usar data de redes sociales, no usar assets de empresas sin
+   permiso. Si se usan datos de sitios publicos, mantener lista de URLs.
+
+
+--------------------------------------------------------------------------------
+5. LO QUE ESTA EXPLICITAMENTE FUERA DE ALCANCE EN SPRINT 1
+--------------------------------------------------------------------------------
+
+ Para evitar scope creep. Nada de esto se construye ahora:
+
+   - App Android nativa / Jetpack Compose / emulador
+   - Android SDK o Android Studio
+   - Docker / docker-compose
+   - Base de datos (el producto es estatico en memoria)
+   - Autenticacion / usuarios
+   - Mas de un endpoint en el backend
+   - Tests de contrato形式 (Pact u otros) — es exactamente lo que el proyecto
+     va a REEMPLAZAR, asi que no tiene sentido construirlo
+   - El Agente Principal de Bob y los subagentes — eso es Sprint 2
+   - Integracion con GitHub / webhooks — Sprint 2
+
+
+--------------------------------------------------------------------------------
+6. RESUMEN DE STACK
+
+   Capa        Tecnologia                     Puerto   Rol
+   ----------  -----------------------------  -------  --------------------------
+   Backend     Node.js 24 + Express           3001     El detonante (produce el diff)
+   Web         Next.js (App Router) + React   3000     Consumidor afectado #1
+   Mobile      Kotlin/JVM + Gradle + Gson     n/a      Consumidor afectado #2
+   Orquestador IBM Bob 2.0                   n/a      Herramienta (Bob hace el trabajo)
+
+   JDK:  Temurin 21 LTS  (NO usar el JDK 26 que esta instalado en paralelo)
+   Sin: Android SDK, Docker, bases de datos
+
+
+================================================================================
+FIN DEL DOCUMENTO
+================================================================================
