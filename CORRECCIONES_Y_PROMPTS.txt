@@ -1,0 +1,119 @@
+TAREA 1.6 - ARREGLAR EL TEST PARA QUE DETECTE EL CONTRATO ROTO
+
+CONTEXTO: el test actual usa un JSON hardcodeado, asi que no detecta cuando el
+backend rompe el contrato. Ese es el problema que vamos a arreglar. Todo lo demas
+esta bien: no toques build.gradle.kts, no toques Producto.kt, no toques el
+backend, no toques web/.
+
+--- PARTE 1: agregar un test que lea el endpoint real ---
+
+En ProductoDeserializationTest.kt, AGREGA un test nuevo. NO borres los 3 tests
+existentes — esos siguen siendo validos como "contrato v1 congelado", que es
+la especificacion historica de como era el contrato. Les cambia el nombre para
+que quede claro cual es cual.
+
+El test nuevo debe hacer HTTP GET a http://localhost:3001/api/producto y
+deserializar ESA respuesta, not un string fijo.
+
+Para el HTTP usa java.net.http.HttpClient, que ya viene en el JDK 21. NO agregues
+dependencias nuevas al build.gradle.kts — no necesitas OkHttp ni Retrofit ni
+nada. Imports:
+
+  import java.net.URI
+  import java.net.http.HttpClient
+  import java.net.http.HttpRequest
+  import java.net.http.HttpResponse.BodyHandlers
+
+El test debe fallar con un mensaje CLARO si el backend no esta levantado. NO
+hagas que el test se saltee si no hay conexion — si se saltea, "tests pasando"
+significaria dos cosas distintas y pierde todo el valor. Si el backend esta caido,
+el test debe FALLAR diciendo "backend no disponible en localhost:3001".
+
+--- PARTE 2: agregar la verificacion de TIPO del JSON ---
+
+ESTA ES LA PARTE IMPORTANTE. Escribe un test que parsee la respuesta cruda como
+arbol JSON (usa JsonParser de Gson) y verifique el TIPO de cada campo, no solo
+el valor.
+
+Para precioTotal, el test debe exigir que el nodo JSON sea un numero:
+
+  val tree = JsonParser.parseString(cuerpo).asJsonObject
+  val nodo = tree.get("precioTotal")
+  assertTrue(nodo.isJsonPrimitive())
+  assertTrue(nodo.asJsonPrimitive.isNumber, "precioTotal debe ser NUMBER en el JSON")
+
+Usa el nombre del metodo del assertEquals que prefieras, pero el mensaje de
+falla tiene que decir que tipo encontro y que tipo esperaba.
+
+HAZ LO MISMO con id (debe ser number) y nombre (debe ser string).
+
+POR QUE ESTA PARTE ES LA QUE ATRAPA EL ESCENARIO B: cuando el backend manda
+"1500" (string) en vez de 1500 (numero), la deserializacion sigue funcionando y
+el test de valor PASS. Pero isNumber() devuelve false y este test FALLA. Sin
+esta parte, el Escenario B es invisible para toda la suite.
+
+--- PARTE 3: re-verificar los tres escenarios ---
+
+Ahora repite los tres escenarios de ruptura CON EL TEST ARREGLADO, porque los
+resultados de RUPTURA.md dicen "los tests PASAN" y eso ya no va a ser cierto.
+Los resultados esperados son:
+
+  Escenario A (precioTotal -> precio_total):
+    test contrato congelado  -> PASS
+    test endpoint vivo       -> FAIL  (precioTotal queda 0.0)
+    test tipo JSON           -> FAIL  (el campo no existe)
+    gradlew test             -> exit code 1
+
+  Escenario B (1500 -> "1500"):
+    test contrato congelado  -> PASS
+    test endpoint vivo       -> PASS  (1500.0 == 1500.0, Gson coerciona)
+    test tipo JSON           -> FAIL  (isNumber() == false)
+    gradlew test             -> exit code 1
+
+  Escenario C (eliminar nombre):
+    test contrato congelado  -> PASS
+    test endpoint vivo       -> FAIL  (nombre queda null)
+    test tipo JSON           -> FAIL  (el campo no existe)
+    gradlew test             -> exit code 1
+
+IMPORTANTE sobre el Escenario B: el test de valor PASA a proposito. No lo
+"arregles" ni lo modifiques para que falle. El hecho de que un test pase y el
+otro falle en el mismo escenario es el hallazgo mas valioso del proyecto: demuestra
+que hace falta analisis de esquema, no solo deserializacion ni busqueda de texto.
+Documentalo asi, con claridad.
+
+Para cada escenario, deja el backend corriendo antes de correr el test, porque
+el test nuevo lo necesita. Registra el exit code real de cada corrida.
+
+--- PARTE 4: actualizar docs/RUPTURA.md ---
+
+Actualiza el documento con los resultados reales de la re-verificacion. Cambios
+obligatorios:
+
+  - Donde hoy dice "los tests de contrato v1 PASAN (usan JSON hardcodeado)",
+    ahora debe decir que el test vivo FALLA y con que exit code.
+  - En el Escenario B, agregar que el test de tipo JSON detecta lo que el test de
+    valor no detecta, y explicar la coercion de Gson como la causa.
+  - Agregar una tabla nueva con los 4 resultados por escenario (congelado, vivo
+    valor, vivo tipo, exit code). Esa tabla es el argumento central del proyecto.
+  - Actualizar la seccion "Estado final" para que refleje que el suite ahora
+    DETECTA la ruptura, no solo que pasa en verde.
+  - NO borres los hallazgos originales. Son correctos y valen. Solo actualiza la
+    seccion de resultados de tests.
+
+--- AL TERMINAR ---
+
+Revierte TODOS los cambios de ruptura en el backend. Deja el contrato v1 intacto.
+Confirma que con el contrato v1 los 6 tests (3 congelados + 3 nuevos) pasan, y
+que gradlew test devuelve exit code 0.
+
+Mostrame:
+  1. El archivo de test completo
+  2. La corrida verde con contrato v1 intacto
+  3. La tabla de resultados de los 3 escenarios con exit codes
+  4. El docs/RUPTURA.md actualizado
+
+Si el backend no responde cuando el test intenta conectarse, NO reintentes en
+loop. Cancela y reportalo.
+
+No hagas git commit. El organizador lo hace al final.
