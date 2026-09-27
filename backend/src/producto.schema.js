@@ -18,7 +18,7 @@
 const productoSchema = {
   id: 1,
   nombre: "Laptop",
-  precioTotal: 1500,
+  precio_total: 1500,
 };
 
 module.exports = productoSchema;

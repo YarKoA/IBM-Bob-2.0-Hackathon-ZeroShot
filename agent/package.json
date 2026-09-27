@@ -1,10 +1,15 @@
 {
   "name": "zeroshot-agent",
-  "version": "1.0.0",
-  "description": "Sprint 2 — Multi-platform contract validation swarm (Principal Agent + Subagents)",
+  "version": "3.0.0",
+  "description": "ZeroShot Contract Validation Swarm — Sprint 2 (multi-agent) + Sprint 3 (webhook + IBM Bob 2.0 API)",
   "main": "principal.js",
   "scripts": {
-    "trigger": "node trigger.js"
+    "trigger": "node trigger.js",
+    "webhook": "node webhook.js",
+    "demo:A": "node webhook.js --scenario A",
+    "demo:B": "node webhook.js --scenario B",
+    "demo:C": "node webhook.js --scenario C",
+    "demo:clean": "node webhook.js --scenario clean"
   },
   "dependencies": {
     "dotenv": "^16.4.5"
