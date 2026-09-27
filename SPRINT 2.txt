@@ -1,0 +1,426 @@
+================================================================================
+SPRINT 2: EL ENJAMBRE DE VALIDACION
+"The Contract Validation Swarm"
+Hackathon IBM Bob 2.0 — ZeroShot
+================================================================================
+
+Fecha:    2026-09-26
+Rama:     main
+Commit:   a206a1c
+Stack:    Node.js agent layer · Next.js (web consumer) · Kotlin/JVM (mobile consumer)
+
+
+--------------------------------------------------------------------------------
+0. CONTEXTO Y PUNTO DE PARTIDA
+--------------------------------------------------------------------------------
+
+Sprint 1 construyo el "ecosistema vulnerable": tres aplicaciones conectadas
+(backend Express, web Next.js, mobile Kotlin/JVM) y documento tres escenarios
+en los que un cambio en el backend rompe a los consumidores en produccion,
+sin que ninguna prueba unitaria del backend lo detecte.
+
+Los tres escenarios de ruptura documentados en docs/RUPTURA.md son:
+
+  Escenario A — Renombrado de campo
+    precioTotal -> precio_total
+    Detectable por grep: SI (el nombre cambia)
+    Excepcion en runtime: NO (Gson asigna 0.0 silenciosamente)
+
+  Escenario B — Cambio de tipo (el mas peligroso)
+    precioTotal: 1500 (number) -> precioTotal: "1500" (string)
+    Detectable por grep: NO (el nombre no cambio)
+    Excepcion en runtime: NO (Gson coerciona String->Double en silencio)
+    Solo detectable con analisis de tipo JSON (isNumber() == false)
+
+  Escenario C — Campo eliminado (el peor caso)
+    nombre: "Laptop" -> [campo eliminado]
+    Detectable por grep: NO (grep no detecta ausencias)
+    Excepcion en runtime: NO (HTTP 200, celda vacia, cero alertas en Sentry)
+
+El objetivo de Sprint 2: automatizar la deteccion de estos tres escenarios
+mediante un enjambre de agentes que opera en el momento en que un desarrollador
+abre un Pull Request, ANTES de que el cambio llegue a produccion.
+
+
+--------------------------------------------------------------------------------
+1. QUE SE CONSTRUYO EN SPRINT 2
+--------------------------------------------------------------------------------
+
+Un pipeline de validacion multi-agente compuesto por 7 modulos Node.js:
+
+  agent/
+    trigger.js              <- Punto de entrada. Simula el webhook de GitHub PR.
+    principal.js            <- Agente Principal. Orquesta todo el flujo.
+    consolidator.js         <- Fusiona hallazgos y publica el comentario de PR.
+    lib/
+      schemaDiff.js         <- Funcion pura: calcula el delta entre dos esquemas.
+      fileReader.js         <- Utilidad: lee archivos del workspace en disco.
+    subagents/
+      webScanner.js         <- Subagente A: analiza web/app/page.js
+      mobileScanner.js      <- Subagente B: analiza Producto.kt
+
+  docs/SPRINT2.md           <- Documentacion tecnica detallada del sprint.
+
+Dependencias nuevas: SOLO dotenv (para leer el .env con el token de GitHub).
+Sin bases de datos, sin Docker, sin dependencias pesadas.
+
+
+--------------------------------------------------------------------------------
+2. ARQUITECTURA Y FLUJO DE DATOS
+--------------------------------------------------------------------------------
+
+  [1] trigger.js
+      Simula el webhook de un Pull Request de GitHub.
+      Construye un payload con:
+        - oldSchema: el contrato v1 (estado actual del backend)
+        - newSchema: el esquema propuesto (el cambio del PR)
+        - scenarioLabel: etiqueta humana para logs y el comentario de PR
+        - changedFile: el archivo que cambio (backend/src/producto.schema.js)
+
+      Uso:
+        node trigger.js --scenario A      (renombrado de campo)
+        node trigger.js --scenario B      (cambio de tipo)
+        node trigger.js --scenario C      (campo eliminado)
+        node trigger.js --scenario clean  (cambio sin ruptura — linea base verde)
+
+  [2] principal.js (Agente Principal)
+      Recibe el payload del trigger.
+      PASO 1: Llama a schemaDiff.js para calcular el delta estructurado.
+              Si no hay cambios de ruptura, reporta verde y termina.
+      PASO 2: Lanza los dos subagentes EN PARALELO via Promise.all():
+                - runWebScanner(delta.changes)
+                - runMobileScanner(delta.changes)
+      PASO 3: Pasa los resultados al consolidator.js.
+
+  [3] lib/schemaDiff.js
+      Funcion pura. No toca disco. No tiene efectos secundarios.
+      Dado oldSchema y newSchema (objetos planos), calcula:
+        - Renombrados: un campo desaparecio y aparecio otro con el mismo valor.
+        - Cambios de tipo: mismo nombre, typeof diferente.
+        - Eliminados: campo en oldSchema ausente en newSchema.
+        - Agregados: campo en newSchema ausente en oldSchema.
+      Devuelve: { changes: FieldChange[], hasBreaks: boolean }
+
+  [4] subagents/webScanner.js (Subagente A — Web)
+      Lee web/app/page.js desde disco.
+      Para cada cambio de ruptura en el delta:
+        - RENOMBRADO: busca referencias directas a producto.<campoViejo>
+          (excluye lineas de comentarios // y *)
+          Hallazgo CRITICAL: "producto.precioTotal sera undefined en runtime"
+        - ELIMINADO: igual que renombrado.
+          Hallazgo CRITICAL: "campo eliminado — fallo silencioso, HTTP 200"
+        - TIPO CAMBIADO: busca referencias al campo y detecta si hay
+          operaciones aritmeticas (*, /, +, -) en lineas no-comentario.
+          Hallazgo WARNING (sin aritmetica) o CRITICAL (con aritmetica).
+      Devuelve: { file, findings[], rawSource, error }
+
+  [5] subagents/mobileScanner.js (Subagente B — Mobile)
+      Lee mobile/src/main/kotlin/com/hackathon/mobile/model/Producto.kt.
+      Parsea DOS tipos de propiedades:
+        a) Anotadas: @SerializedName("campo") val propiedad: Tipo
+        b) Sin anotar: val propiedad: Tipo  (Gson usa el nombre de la propiedad)
+      Para cada cambio de ruptura:
+        - RENOMBRADO: @SerializedName apunta al nombre viejo.
+          Hallazgo CRITICAL: "Gson asignara 0.0 silenciosamente (sin excepcion)"
+        - ELIMINADO: la anotacion o propiedad ya no tendra coincidencia.
+          Hallazgo CRITICAL: "Gson asignara null/0 silenciosamente"
+        - TIPO CAMBIADO: tipo Kotlin vs tipo JSON del delta.
+          Si backend manda String y Kotlin espera Double:
+            -> Gson coerciona String->Double EN SILENCIO.
+            -> Hallazgo CRITICAL: "solo isNumber() lo detecta (Escenario B)"
+          Si backend manda Number y Kotlin espera String:
+            -> JsonSyntaxException en runtime.
+            -> Hallazgo CRITICAL: "crash de deserializacion"
+      Devuelve: { file, findings[], rawSource, error }
+
+  [6] consolidator.js
+      Fusiona los hallazgos de ambos subagentes.
+      Construye el comentario de PR en Markdown con:
+        - Header: BREAKING CHANGES / Warnings / Green segun severidad
+        - Delta del contrato en formato diff
+        - Hallazgos CRITICAL y WARNING con archivo, linea y snippet de codigo
+        - Notas contextuales segun el tipo de escenario (A/B/C)
+        - Footer con instruccion de no hacer merge
+      Imprime el comentario en consola.
+      Si GITHUB_TOKEN y GITHUB_PR_NUMBER estan en el .env:
+        -> POST /repos/{owner}/{repo}/issues/{pr}/comments via HTTPS nativo
+        -> Sin dependencias externas para el HTTP (usa el modulo https de Node.js)
+      Devuelve: { comment, posted, githubResponse }
+
+
+--------------------------------------------------------------------------------
+3. COMO EJECUTAR EL PIPELINE
+--------------------------------------------------------------------------------
+
+PREREQUISITO:
+  cd agent
+  npm install       <- instala solo dotenv (1 paquete)
+
+SIN PUBLICACION EN GITHUB (solo consola):
+  cd agent
+  node trigger.js --scenario A
+  node trigger.js --scenario B
+  node trigger.js --scenario C
+  node trigger.js --scenario clean
+
+CON PUBLICACION REAL EN UN PR DE GITHUB:
+  1. Crear el archivo agent/.env a partir de agent/.env.example:
+       cp agent/.env.example agent/.env
+
+  2. Editar agent/.env con los valores reales:
+       GITHUB_TOKEN=ghp_tu_token_aqui
+       GITHUB_PR_NUMBER=1
+       GITHUB_OWNER=YarKoA
+       GITHUB_REPO=IBM-Bob-2.0-Hackathon-ZeroShot
+
+  3. Correr cualquier escenario:
+       node trigger.js --scenario A
+     El comentario se publica automaticamente en el PR indicado.
+
+NOTA: El token de GitHub requiere el scope "repo" para poder publicar comentarios
+en issues/PRs. El archivo .env NO se sube al repositorio (esta en .gitignore).
+
+
+--------------------------------------------------------------------------------
+4. RESULTADOS DE VALIDACION — LOS 4 ESCENARIOS
+--------------------------------------------------------------------------------
+
+ESCENARIO A — Renombrado: precioTotal -> precio_total
+-----------------------------------------------------
+  Agente Principal detecta:   RENAMED: precioTotal -> precio_total
+  Subagente A (Web):          1 hallazgo CRITICAL — web/app/page.js:53
+  Subagente B (Mobile):       1 hallazgo CRITICAL — Producto.kt:23
+  Total:                      2 hallazgos
+  Exit code del pipeline:     0 (completado, alertas generadas)
+
+  Hallazgos:
+    [Web]    producto.precioTotal sera undefined en runtime.
+             La celda renderizara vacia. Cero errores en consola.
+    [Mobile] @SerializedName("precioTotal") ya no coincide con ningun campo.
+             Gson asignara 0.0 a precioTotal silenciosamente.
+
+  Detectable por grep:         SI (el nombre cambio)
+  Excepcion en runtime:        NO
+
+  Comentario de PR generado:
+    ## BREAKING CHANGES DETECTED
+    [diff del contrato]
+    CRITICAL [Web] web/app/page.js:53
+    > producto.precioTotal sera undefined...
+    CRITICAL [Mobile] Producto.kt:23
+    > @SerializedName("precioTotal") is now stale...
+    Nota: Este escenario es el control. Los escenarios B y C son los que
+    demuestran que se necesita analisis de esquema.
+
+
+ESCENARIO B — Cambio de tipo: precioTotal: 1500 -> precioTotal: "1500"
+----------------------------------------------------------------------
+  Agente Principal detecta:   TYPE CHANGED: precioTotal (number -> string)
+  Subagente A (Web):          1 hallazgo WARNING — web/app/page.js:53
+  Subagente B (Mobile):       1 hallazgo CRITICAL — Producto.kt:23
+  Total:                      2 hallazgos
+  Exit code del pipeline:     0 (completado, alertas generadas)
+
+  Hallazgos:
+    [Web]    WARNING: React renderiza "1500" igual que 1500.
+             Sin excepcion. Pero cualquier operacion aritmetica daria NaN.
+    [Mobile] CRITICAL: tipo en JSON es string, Kotlin espera Double.
+             Gson coerciona "1500"->1500.0 en silencio.
+             El test de valor PASA. Solo isNumber()==false lo detecta.
+             ESTO ES EL ESCENARIO B: la deserializacion exitosa no garantiza
+             el cumplimiento del contrato de tipos.
+
+  Detectable por grep:                          NO
+  Detectable por test de valor (desserializacion): NO (Gson coerciona)
+  Detectable por analisis de tipo JSON:         SI (isNumber()==false)
+  Detectable por este agente:                   SI (diffSchemas detecta typeof)
+  Excepcion en runtime:                         NO
+
+  Comentario de PR generado:
+    ## BREAKING CHANGES DETECTED
+    [diff del contrato: precioTotal number -> string]
+    WARNING [Web] web/app/page.js:53
+    > tipo cambiado, React renderiza igual pero aritmetica daria NaN
+    CRITICAL [Mobile] Producto.kt:23
+    > Gson coerciona silenciosamente — solo isNumber() lo detecta
+    Nota: El nombre del campo no cambio. grep no encuentra nada anormal.
+    Se requiere analisis de esquema, no busqueda de texto.
+
+
+ESCENARIO C — Campo eliminado: nombre: "Laptop" -> [campo eliminado]
+--------------------------------------------------------------------
+  Agente Principal detecta:   REMOVED: nombre (was string)
+  Subagente A (Web):          1 hallazgo CRITICAL — web/app/page.js:48
+  Subagente B (Mobile):       1 hallazgo CRITICAL — Producto.kt:22
+  Total:                      2 hallazgos
+  Exit code del pipeline:     0 (completado, alertas generadas)
+
+  Hallazgos:
+    [Web]    CRITICAL: producto.nombre sera undefined.
+             Celda "Nombre" vacia. HTTP 200. Cero errores en consola o Sentry.
+    [Mobile] CRITICAL: nombre es una propiedad sin @SerializedName.
+             Gson la mapea por nombre de propiedad. Al no estar en el JSON,
+             asigna null. Sin excepcion. Sin crash.
+
+  Detectable por grep:         NO (grep no detecta ausencias)
+  Excepcion en runtime:        NO (el peor caso — totalmente silencioso)
+  Detectable por este agente:  SI (diffSchemas.changes incluye REMOVED)
+
+  Comentario de PR generado:
+    ## BREAKING CHANGES DETECTED
+    [diff: nombre: "Laptop" REMOVED]
+    CRITICAL [Web] web/app/page.js:48
+    > campo eliminado — fallo silencioso, HTTP 200, no hay excepcion
+    CRITICAL [Mobile] Producto.kt:22
+    > Gson asignara null silenciosamente. Sin JsonSyntaxException.
+    Nota: No hay excepcion en ningun consumidor. HTTP 200. Cero alertas.
+    El unico indicador: un campo vacio en la UI que un usuario puede
+    (o no) reportar.
+
+
+ESCENARIO CLEAN — Solo cambio de valor: nombre: "Laptop" -> "Laptop Pro"
+-----------------------------------------------------------------------
+  Agente Principal detecta:   Sin cambios de ruptura.
+  Subagentes lanzados:        NINGUNO (se saltea el fan-out)
+  Comentario publicado:       NINGUNO
+  Salida:                     "No breaking changes detected. Consumers are safe."
+
+  Este escenario verifica que el sistema no genera falsos positivos cuando
+  el contrato estructural no cambia.
+
+
+--------------------------------------------------------------------------------
+5. TABLA RESUMEN DE DETECCION
+--------------------------------------------------------------------------------
+
+  Escenario      | Agente | grep | Runtime exc. | Gson silencioso | Peor caso
+  ---------------+--------+------+--------------+-----------------+----------
+  A — Renombrado | SI     | SI   | NO           | SI (0.0)        | No
+  B — Tipo       | SI     | NO   | NO           | SI (coercion)   | Invisible
+  C — Eliminado  | SI     | NO   | NO           | SI (null)       | MAXIMO
+  Clean          | Verde  | —    | —            | —               | —
+
+  El Escenario B es la fila decisiva del proyecto:
+    - El test de valor PASA (Gson coerciona correctamente)
+    - El tipo en el JSON es incorrecto
+    - Solo analisis de esquema lo detecta
+    - Ninguna herramienta basada en texto o desserializacion lo atrapa
+    - El agente lo detecta via typeof comparison en schemaDiff.js
+
+
+--------------------------------------------------------------------------------
+6. POR QUE NO SE USA UN LLM EN SPRINT 2
+--------------------------------------------------------------------------------
+
+La deteccion es DETERMINISTA y ESTATICA:
+
+  schemaDiff.js:      compara typeof de los valores. No hay ambiguedad.
+  webScanner.js:      regex sobre el AST textual del componente React.
+  mobileScanner.js:   regex sobre las anotaciones y propiedades de la data class.
+
+Resultado: < 100ms de ejecucion, cero tokens consumidos, cero costo por corrida.
+
+El valor del proyecto NO esta en el LLM — esta en la orquestacion:
+  - Un agente lee el contrato del backend
+  - Dos subagentes leen los consumidores EN PARALELO
+  - El sistema correlaciona los hallazgos entre capas de la arquitectura
+  - El resultado se publica en el canal correcto (el PR de GitHub)
+  automaticamente, sin intervencion humana
+
+Un LLM NO puede hacer esto mas rapido ni mas deterministicamente.
+Un grep tampoco puede, porque no puede detectar ausencias ni cambios de tipo.
+Este es el espacio que justifica el enjambre de agentes.
+
+
+--------------------------------------------------------------------------------
+7. INTEGRACION CON GITHUB
+--------------------------------------------------------------------------------
+
+El modulo consolidator.js realiza un POST a la GitHub REST API usando
+el modulo nativo https de Node.js (sin dependencias externas para HTTP).
+
+Endpoint:  POST https://api.github.com/repos/{owner}/{repo}/issues/{pr}/comments
+Headers:
+  Authorization: Bearer {GITHUB_TOKEN}
+  User-Agent:    ZeroShot-Contract-Agent/2.0
+  Accept:        application/vnd.github+json
+  X-GitHub-Api-Version: 2022-11-28
+
+Si el token o el PR number no estan configurados, el pipeline imprime el
+comentario en consola y avisa que el posting fue omitido. No falla.
+
+Variables de entorno (agent/.env):
+  GITHUB_TOKEN       -> PAT con scope "repo"
+  GITHUB_PR_NUMBER   -> numero del PR donde publicar
+  GITHUB_OWNER       -> propietario del repositorio (default: YarKoA)
+  GITHUB_REPO        -> nombre del repositorio (default: IBM-Bob-2.0-Hackathon-ZeroShot)
+
+
+--------------------------------------------------------------------------------
+8. ESTRUCTURA DE ARCHIVOS NUEVA EN SPRINT 2
+--------------------------------------------------------------------------------
+
+  agent/
+    .env.example                   <- template con variables de entorno
+    package.json                   <- "zeroshot-agent", dependencia: dotenv
+    trigger.js                     <- CLI: node trigger.js --scenario A/B/C/clean
+    principal.js                   <- Agente Principal
+    consolidator.js                <- Fusionador + publicador de PR
+    lib/
+      schemaDiff.js                <- diff de esquemas (funcion pura)
+      fileReader.js                <- lector de archivos del workspace
+    subagents/
+      webScanner.js                <- Subagente A: escanea web/
+      mobileScanner.js             <- Subagente B: escanea mobile/
+
+  docs/
+    SPRINT2.md                     <- documentacion tecnica en Markdown
+
+
+--------------------------------------------------------------------------------
+9. RELACION CON EL SPRINT 1
+--------------------------------------------------------------------------------
+
+Sprint 1 construyo la evidencia de que el problema ES REAL:
+  - Tres escenarios de ruptura documentados con errores reales, exit codes,
+    y comandos de reproduccion.
+  - Una suite de 5 tests en Kotlin que detecta la ruptura con gradlew test.
+  - Contrato v1 definido en un archivo separado (backend/src/producto.schema.js)
+    especificamente para que el agente del Sprint 2 lo pudiera leer.
+
+Sprint 2 usa esa infraestructura:
+  - Lee backend/src/producto.schema.js como fuente de verdad del contrato.
+  - Analiza web/app/page.js (construido en Sprint 1 con acceso directo
+    intencional a producto.precioTotal sin optional chaining).
+  - Analiza Producto.kt (construido en Sprint 1 con @SerializedName explicito).
+
+El Sprint 1 fue construido sabiendo lo que el Sprint 2 necesitaba.
+El archivo separado del esquema no fue una decision de estilo — fue una
+decision de arquitectura para que este agente pudiera hacer Document
+Understanding sobre un contrato claro y aislado.
+
+
+--------------------------------------------------------------------------------
+10. LO QUE QUEDA PARA SPRINT 3
+--------------------------------------------------------------------------------
+
+  - Leer backend/src/producto.schema.js VIVO desde disco en vez de recibir
+    el payload del trigger. (la funcion loadBackendSchema() ya existe en
+    lib/fileReader.js — solo falta conectarla al flujo principal)
+
+  - Servidor de webhook real que escuche eventos push de GitHub y ejecute
+    el pipeline automaticamente sin necesidad de correr trigger.js a mano.
+
+  - Soporte para esquemas anidados (actualmente solo maneja objetos planos).
+
+  - Escanear multiples componentes de web/ (actualmente solo page.js).
+
+  - Escanear multiples archivos de Kotlin (actualmente solo Producto.kt).
+
+  - Modo "git diff": leer el diff real del PR para extraer el esquema nuevo
+    dinamicamente, sin hardcodear los escenarios en trigger.js.
+
+
+================================================================================
+FIN DEL DOCUMENTO — SPRINT 2
+================================================================================
