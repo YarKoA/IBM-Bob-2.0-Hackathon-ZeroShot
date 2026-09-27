@@ -1,0 +1,12 @@
+{
+  "name": "zeroshot-agent",
+  "version": "1.0.0",
+  "description": "Sprint 2 — Multi-platform contract validation swarm (Principal Agent + Subagents)",
+  "main": "principal.js",
+  "scripts": {
+    "trigger": "node trigger.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5"
+  }
+}
